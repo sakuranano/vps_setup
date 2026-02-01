@@ -1,7 +1,3 @@
-没问题，你可以直接复制下面的代码块，保存为 `README.md` 文件。
-
-我已经将安装命令中的 URL 替换为你提供的 GitHub 仓库地址。
-
 ```markdown
 # 🛠️ VPS 运维工具箱 (Lightweight VPS Toolbox)
 
