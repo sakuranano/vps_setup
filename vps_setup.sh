@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # =========================================================
-# 脚本名称: VPS 运维工具箱 V5.7 (全能体检版)
+# 脚本名称: VPS 运维工具箱 V6.0 (状态感知最终版)
 # 适用环境: Debian 12 / Ubuntu 22+
-# 核心组件: Docker + Lucky + DPanel + WARP + IP.Check.Place
+# 核心组件: Docker + Lucky + DPanel + WARP + IP.Check + SysInfo
 # =========================================================
 
 # 基础配置
@@ -18,56 +18,50 @@ PLAIN='\033[0m'
 [[ $EUID -ne 0 ]] && echo -e "${RED}错误: 必须使用 root 用户运行此脚本！${PLAIN}" && exit 1
 
 # ---------------------------------------------------------
-# 新增功能：全能 IP 体检
+# 辅助函数：状态检测
 # ---------------------------------------------------------
-function check_all_info() {
-    clear
-    echo -e "================================================="
-    echo -e "   全能 IP 质量与解锁体检 (基于 IP.Check.Place)"
-    echo -e "================================================="
-    echo -e "${GREEN}1.${PLAIN} 检测 ${SKYBLUE}本机原生 IP${PLAIN} (Direct)"
-    echo -e "${GREEN}2.${PLAIN} 检测 ${SKYBLUE}WARP 代理 IP${PLAIN} (通过端口 40000)"
-    echo -e "-------------------------------------------------"
-    echo -e "${GREEN}0.${PLAIN} 返回主菜单"
-    echo -e "================================================="
-    read -p "请选择检测模式: " check_type
-
-    case "$check_type" in
-        1)
-            echo -e "${GREEN}> 正在启动全能体检脚本 (本机直连)...${PLAIN}"
-            # 安装必要依赖以防脚本报错
-            apt install -y curl wget jq >/dev/null 2>&1
-            bash <(curl -Ls IP.Check.Place)
-            ;;
-        2)
-            echo -e "${GREEN}> 正在启动全能体检脚本 (通过 WARP 代理)...${PLAIN}"
-            if ! ss -nltp | grep -q "40000"; then
-                echo -e "${RED}错误: 未检测到 WARP 端口 (40000)。请先安装 WARP！${PLAIN}"
-                read -p "按回车键返回..."
-                return
-            fi
-            # 临时设置代理，让体检脚本走 WARP 通道
-            export ALL_PROXY=socks5://127.0.0.1:40000
-            bash <(curl -Ls IP.Check.Place)
-            unset ALL_PROXY
-            ;;
-        0) return ;;
-        *) echo -e "${RED}输入错误${PLAIN}" ;;
-    esac
+function get_app_status() {
+    # 1. Docker
+    if command -v docker >/dev/null 2>&1; then 
+        dock_status="${GREEN}[已安装]${PLAIN}" 
+    else 
+        dock_status="${RED}[未安装]${PLAIN}" 
+    fi
     
-    echo ""
-    read -p "体检完成，按回车键返回..."
+    # 2. WARP (检查 40000 端口)
+    if ss -nltp | grep -q ":40000"; then 
+        warp_status="${GREEN}[运行中]${PLAIN}" 
+    else 
+        warp_status="${RED}[未启动]${PLAIN}" 
+    fi
+    
+    # 3. Lucky (检查容器)
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^lucky$"; then 
+        lucky_status="${GREEN}[运行中]${PLAIN}"
+    else 
+        lucky_status="${RED}[未安装]${PLAIN}"
+    fi
+    
+    # 4. DPanel (检查容器)
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^dpanel$"; then 
+        dp_status="${GREEN}[运行中]${PLAIN}"
+    else 
+        dp_status="${RED}[未安装]${PLAIN}"
+    fi
 }
 
 # ---------------------------------------------------------
-# 核心安装模块
+# 核心功能模块
 # ---------------------------------------------------------
 
+# 1. 安装 DPanel
 function install_dpanel() {
     echo -e "${GREEN}> 正在部署 DPanel (Lite版)...${PLAIN}"
     if ! command -v docker >/dev/null 2>&1; then echo -e "${RED}请先安装 Docker！${PLAIN}"; return; fi
+
     WORK_DIR="$BASE_DIR/dpanel"
     mkdir -p "$WORK_DIR" && cd "$WORK_DIR"
+
     cat > docker-compose.yml <<EOF
 version: '3'
 services:
@@ -86,15 +80,17 @@ EOF
     echo -e "${GREEN}正在启动 DPanel...${PLAIN}"
     if ! docker compose up -d; then echo -e "${RED}启动失败！${PLAIN}"; return; fi
     if command -v ufw >/dev/null 2>&1; then ufw allow 8888/tcp comment 'DPanel'; fi
-    echo -e "${GREEN}>>> DPanel 部署成功！访问: http://$(curl -s ifconfig.me):8888${PLAIN}"
-    echo -e "默认账号: admin | 密码: admin ${YELLOW}(请修改)${PLAIN}"
+    echo -e "${GREEN}>>> 部署成功！访问: http://$(curl -s ifconfig.me):8888${PLAIN} (默认密码: admin)"
 }
 
+# 2. 安装 Lucky
 function install_lucky() {
-    echo -e "${GREEN}> 正在部署 Lucky (轻量中文反代)...${PLAIN}"
+    echo -e "${GREEN}> 正在部署 Lucky (中文反代)...${PLAIN}"
     if ! command -v docker >/dev/null 2>&1; then echo -e "${RED}请先安装 Docker！${PLAIN}"; return; fi
+    
     WORK_DIR="$BASE_DIR/lucky"
     mkdir -p "$WORK_DIR" && cd "$WORK_DIR"
+    
     cat > docker-compose.yml <<EOF
 version: '3'
 services:
@@ -111,15 +107,19 @@ EOF
     if command -v ufw >/dev/null 2>&1; then 
         ufw allow 16601/tcp comment 'Lucky Panel'; ufw allow 80/tcp comment 'HTTP'; ufw allow 443/tcp comment 'HTTPS'
     fi
-    echo -e "${GREEN}>>> Lucky 部署成功！访问: http://$(curl -s ifconfig.me):16601${PLAIN}"
-    echo -e "默认账号: 666 | 密码: 666"
+    echo -e "${GREEN}>>> 部署成功！访问: http://$(curl -s ifconfig.me):16601${PLAIN} (默认密码: 666)"
 }
 
+# 3. 安装 WARP
 function install_warp() {
     echo -e "${GREEN}> 安装/修复 WARP...${PLAIN}"
+    # 统一依赖检查
+    apt update -y && apt install -y curl gnupg lsb-release
+    
     rm -f /etc/apt/sources.list.d/cloudflare-client.list
     curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ bookworm main" | tee /etc/apt/sources.list.d/cloudflare-client.list
+    
     apt update -y && apt install -y cloudflare-warp
     warp-cli registration delete >/dev/null 2>&1 
     echo "y" | warp-cli registration new
@@ -129,24 +129,55 @@ function install_warp() {
 }
 
 # ---------------------------------------------------------
-# 管理与基础模块
+# 工具模块
 # ---------------------------------------------------------
 
+function check_system_info() {
+    clear
+    echo -e "=== 系统资源看板 ==="
+    # 快速获取无需额外安装
+    cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print 100 - $8"%"}')
+    mem_used=$(free -m | awk '/Mem:/ {print $3}')
+    mem_total=$(free -m | awk '/Mem:/ {print $2}')
+    disk_used=$(df -h / | awk '/\// {print $3}')
+    disk_total=$(df -h / | awk '/\// {print $2}')
+    tcp_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
+    
+    echo -e "CPU 使用 : ${SKYBLUE}$cpu_usage${PLAIN}"
+    echo -e "内存使用 : ${SKYBLUE}$mem_used / $mem_total MB${PLAIN}"
+    echo -e "硬盘使用 : ${SKYBLUE}$disk_used / $disk_total${PLAIN}"
+    echo -e "TCP 算法 : ${SKYBLUE}$tcp_cc${PLAIN}"
+    echo -e "公网 IP  : ${SKYBLUE}$(curl -s4m 2 ifconfig.me)${PLAIN}"
+    echo ""
+    read -p "按回车返回..."
+}
+
+function check_all_info() {
+    echo -e "${GREEN}> 启动全能体检脚本...${PLAIN}"
+    apt install -y curl wget jq >/dev/null 2>&1
+    echo -e "1. 本机直连  2. WARP代理"
+    read -p "选择: " m
+    if [[ "$m" == "2" ]]; then export ALL_PROXY=socks5://127.0.0.1:40000; fi
+    bash <(curl -Ls IP.Check.Place)
+    unset ALL_PROXY
+    echo ""; read -p "按回车返回..."
+}
+
 function uninstall_app() {
-    local app_name=$1; local dir_name=$2; local port=$3
-    echo -e "${YELLOW}正在卸载 $app_name ...${PLAIN}"
-    if [ -d "$BASE_DIR/$dir_name" ]; then
-        cd "$BASE_DIR/$dir_name" && docker compose down >/dev/null 2>&1
-        cd .. && rm -rf "$BASE_DIR/$dir_name"
-        echo -e "${GREEN}数据已清除。${PLAIN}"
-    else echo -e "${YELLOW}目录不存在。${PLAIN}"; fi
+    local app=$1; local dir=$2; local port=$3
+    echo -e "${YELLOW}卸载 $app ...${PLAIN}"
+    if [ -d "$BASE_DIR/$dir" ]; then
+        cd "$BASE_DIR/$dir" && docker compose down >/dev/null 2>&1
+        cd .. && rm -rf "$BASE_DIR/$dir"
+    fi
     if command -v ufw >/dev/null 2>&1; then ufw delete allow "$port"/tcp >/dev/null 2>&1; fi
-    echo -e "${GREEN}>>> $app_name 卸载完毕。${PLAIN}"
+    echo -e "${GREEN}>>> $app 已卸载${PLAIN}"
 }
 
 function system_init() {
     echo -e "${GREEN}> 系统初始化...${PLAIN}"
-    apt update -y && apt install -y curl wget git htop vim unzip socat tar gnupg lsb-release lsof
+    # 统一安装所有依赖
+    apt update -y && apt install -y curl wget git htop vim unzip socat tar gnupg lsb-release lsof jq
     timedatectl set-timezone Asia/Shanghai
     if ! grep -q "bbr" /etc/sysctl.conf; then
         echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
@@ -168,23 +199,21 @@ function install_docker() {
 }
 
 function install_security() {
-    echo -e "${GREEN}> 安全加固 (防火墙 & SSH防护)...${PLAIN}"
+    echo -e "${GREEN}> 安全加固...${PLAIN}"
     apt install -y fail2ban ufw lsof
     SSH_PORT=$(ss -nltp | grep sshd | awk '{print $4}' | awk -F: '{print $NF}' | head -n 1)
     if [ -z "$SSH_PORT" ]; then SSH_PORT=22; fi
-    echo -e "${YELLOW}SSH 端口: $SSH_PORT${PLAIN}"
     ufw default deny incoming; ufw default allow outgoing
     ufw allow "$SSH_PORT"/tcp comment 'SSH'
     ufw allow 80/tcp comment 'HTTP'; ufw allow 443/tcp comment 'HTTPS'
-    ufw allow 16601/tcp comment 'Lucky Panel'; ufw allow 8888/tcp comment 'DPanel'
+    ufw allow 16601/tcp comment 'Lucky'; ufw allow 8888/tcp comment 'DPanel'
     ufw route allow default allow out on docker0
     echo "y" | ufw enable
     systemctl enable fail2ban && systemctl start fail2ban
-    echo -e "${GREEN}安全策略已应用！${PLAIN}"
+    echo -e "${GREEN}安全策略已应用${PLAIN}"
 }
 
 function ops_cleanup() {
-    echo -e "${GREEN}> 清理垃圾文件...${PLAIN}"
     docker system prune -f
     find /var/lib/docker/containers/ -name "*-json.log" -exec truncate -s 0 {} \;
     echo -e "${GREEN}清理完成${PLAIN}"
@@ -197,40 +226,41 @@ function ops_cleanup() {
 function show_uninstall_menu() {
     clear
     echo -e "================================================="
-    echo -e "   应用卸载管理 ${RED}[危险操作]${PLAIN}"
+    echo -e "   应用卸载管理 ${RED}[危险]${PLAIN}"
     echo -e "================================================="
-    echo -e "${GREEN}1.${PLAIN} 卸载 Lucky"; echo -e "${GREEN}2.${PLAIN} 卸载 DPanel"
-    echo -e "-------------------------------------------------"
-    echo -e "${GREEN}0.${PLAIN} 返回主菜单"
-    echo -e "================================================="
-    read -p "请选择: " un_num
-    case "$un_num" in
+    echo -e "1. 卸载 Lucky"
+    echo -e "2. 卸载 DPanel"
+    echo -e "0. 返回"
+    read -p "选择: " u
+    case "$u" in
         1) uninstall_app "Lucky" "lucky" "16601" ;;
         2) uninstall_app "DPanel" "dpanel" "8888" ;;
         0) show_menu ;;
-        *) echo -e "${RED}输入错误${PLAIN}"; sleep 1; show_uninstall_menu ;;
+        *) show_uninstall_menu ;;
     esac
-    if [[ "$un_num" != "0" ]]; then read -p "按回车继续..." && show_uninstall_menu; fi
+    if [[ "$u" != "0" ]]; then read -p "按回车继续..." && show_uninstall_menu; fi
 }
 
 function show_menu() {
+    get_app_status # 刷新状态
     clear
     echo -e "================================================="
-    echo -e "   VPS 运维工具箱 V5.7 ${YELLOW}[全能体检版]${PLAIN}"
-    echo -e "   存储目录: ${SKYBLUE}$BASE_DIR${PLAIN}"
+    echo -e "   VPS 运维工具箱 V6.0 ${YELLOW}[Final Stable]${PLAIN}"
+    echo -e "   存储: ${SKYBLUE}$BASE_DIR${PLAIN}"
     echo -e "================================================="
-    echo -e "${GREEN}1.${PLAIN} 系统初始化 (BBR/Swap/时区)"
-    echo -e "${GREEN}2.${PLAIN} 安装 Docker 环境"
-    echo -e "${GREEN}3.${PLAIN} 安装 WARP (IP隐藏/SOCKS5)"
+    echo -e "${GREEN}1.${PLAIN} 系统初始化 (BBR/Swap/依赖) ${YELLOW}*建议首选*${PLAIN}"
+    echo -e "${GREEN}2.${PLAIN} 安装 Docker 环境  $dock_status"
+    echo -e "${GREEN}3.${PLAIN} 安装 WARP 代理    $warp_status"
     echo -e "-------------------------------------------------"
-    echo -e "${GREEN}4.${PLAIN} ${SKYBLUE}部署 Lucky (反代/端口转发)${PLAIN}"
-    echo -e "${GREEN}5.${PLAIN} ${SKYBLUE}部署 DPanel (Docker面板)${PLAIN}"
+    echo -e "${GREEN}4.${PLAIN} ${SKYBLUE}部署 Lucky 反代${PLAIN}   $lucky_status"
+    echo -e "${GREEN}5.${PLAIN} ${SKYBLUE}部署 DPanel 面板${PLAIN}  $dp_status"
     echo -e "-------------------------------------------------"
-    echo -e "${GREEN}6.${PLAIN} ${YELLOW}全能 IP 体检 (纯净度/解锁)${PLAIN} ${YELLOW}*推荐*${PLAIN}"
+    echo -e "${GREEN}6.${PLAIN} 查看本机配置 (轻量看板)"
+    echo -e "${GREEN}7.${PLAIN} 全能 IP 体检 (解锁/欺诈分)"
     echo -e "-------------------------------------------------"
-    echo -e "${GREEN}7.${PLAIN} 安全加固 (智能防火墙)"
-    echo -e "${GREEN}8.${PLAIN} 磁盘/日志清理"
-    echo -e "${GREEN}9.${PLAIN} ${RED}卸载应用 ->${PLAIN}"
+    echo -e "${GREEN}8.${PLAIN} 安全加固 (防火墙/Fail2Ban)"
+    echo -e "${GREEN}9.${PLAIN} 磁盘/日志清理"
+    echo -e "${GREEN}10.${PLAIN} ${RED}卸载应用 ->${PLAIN}"
     echo -e "================================================="
     echo -e "${GREEN}0.${PLAIN} 退出"
     echo -e "================================================="
@@ -241,10 +271,11 @@ function show_menu() {
         3) install_warp ;;
         4) install_lucky ;;
         5) install_dpanel ;;
-        6) check_all_info ;;
-        7) install_security ;;
-        8) ops_cleanup ;;
-        9) show_uninstall_menu ;;
+        6) check_system_info ;;
+        7) check_all_info ;;
+        8) install_security ;;
+        9) ops_cleanup ;;
+        10) show_uninstall_menu ;;
         0) exit 0 ;;
         *) echo -e "${RED}输入错误${PLAIN}" ;;
     esac
