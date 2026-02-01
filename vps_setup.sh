@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # =========================================================
-# 脚本名称: VPS 运维工具箱 V5.6 (IP质量检测版)
+# 脚本名称: VPS 运维工具箱 V5.7 (全能体检版)
 # 适用环境: Debian 12 / Ubuntu 22+
-# 核心组件: Docker + Lucky + DPanel + WARP + UnlockCheck + IPQuality
+# 核心组件: Docker + Lucky + DPanel + WARP + IP.Check.Place
 # =========================================================
 
 # 基础配置
@@ -18,104 +18,45 @@ PLAIN='\033[0m'
 [[ $EUID -ne 0 ]] && echo -e "${RED}错误: 必须使用 root 用户运行此脚本！${PLAIN}" && exit 1
 
 # ---------------------------------------------------------
-# 新增功能：IP 质量检测 (提取自 NodeQuality)
+# 新增功能：全能 IP 体检
 # ---------------------------------------------------------
-function check_ip_quality() {
+function check_all_info() {
     clear
     echo -e "================================================="
-    echo -e "   IP 纯净度与欺诈值检测"
-    echo -e "   ${YELLOW}注意: 分数越低越好 (0-100)${PLAIN}"
-    echo -e "================================================="
-    
-    echo -e "${GREEN}> 正在获取 IP 信息...${PLAIN}"
-    
-    # 获取 IP 基础信息
-    local ip_info=$(curl -sL https://ipinfo.io/json)
-    local ip=$(echo "$ip_info" | grep '"ip":' | cut -d'"' -f4)
-    local city=$(echo "$ip_info" | grep '"city":' | cut -d'"' -f4)
-    local region=$(echo "$ip_info" | grep '"region":' | cut -d'"' -f4)
-    local country=$(echo "$ip_info" | grep '"country":' | cut -d'"' -f4)
-    local org=$(echo "$ip_info" | grep '"org":' | cut -d'"' -f4)
-    
-    echo -e "当前 IP: ${SKYBLUE}$ip${PLAIN}"
-    echo -e "归属地 : ${SKYBLUE}$city, $region, $country${PLAIN}"
-    echo -e "运营商 : ${SKYBLUE}$org${PLAIN}"
-    echo -e "-------------------------------------------------"
-    
-    echo -e "${GREEN}> 正在检测欺诈分数 (Scamalytics)...${PLAIN}"
-    
-    # 获取 Scamalytics 分数 (模拟请求，提取HTML中的分数)
-    # 注意：Scamalytics 有反爬虫，这里尝试使用 scama.py 的简化逻辑或直接 curl 解析
-    # 为了保证轻量和成功率，我们使用一个公开的 IP 纯净度查询 API (ip234.in 或类似) 
-    # 或者直接简单解析 scamalytics 页面（可能会失效，建议用 ip-api 作为基础风险判断）
-    
-    # 这里使用 ip-api.com 的 mobile/proxy 检测作为基础替代，因为 Scamalytics API 需要 Key
-    local security_info=$(curl -sL "http://ip-api.com/json/$ip?fields=status,message,mobile,proxy,hosting")
-    
-    local is_mobile=$(echo "$security_info" | grep '"mobile":' | cut -d':' -f2 | cut -d',' -f1)
-    local is_proxy=$(echo "$security_info" | grep '"proxy":' | cut -d':' -f2 | cut -d',' -f1)
-    local is_hosting=$(echo "$security_info" | grep '"hosting":' | cut -d':' -f2 | cut -d',' -f1)
-    
-    # 模拟评分逻辑
-    local risk_level="低"
-    local color=$GREEN
-    
-    if [[ "$is_proxy" == "true" ]]; then 
-        risk_level="中 (检测到代理特征)"
-        color=$YELLOW
-    fi
-    if [[ "$is_hosting" == "true" ]]; then
-        # 绝大多数 VPS 都是 Hosting，这是正常的，但在某些场景下会被视为非家庭宽带
-        risk_level="${risk_level} / 数据中心IP"
-    fi
-    
-    echo -e "IP 类型: ${SKYBLUE}$( [ "$is_hosting" == "true" ] && echo "数据中心(VPS)" || echo "家庭宽带/其他" )${PLAIN}"
-    echo -e "代理检测: ${color}$( [ "$is_proxy" == "true" ] && echo "是 (风险)" || echo "否" )${PLAIN}"
-    
-    echo -e "\n${YELLOW}提示: 要获得更精准的 Scamalytics 欺诈分数，建议访问:${PLAIN}"
-    echo -e "${SKYBLUE}https://scamalytics.com/ip/$ip${PLAIN}"
-    
-    echo ""
-    read -p "检测完成，按回车键返回..."
-}
-
-# ---------------------------------------------------------
-# 新增功能：流媒体检测 (V5.5内容)
-# ---------------------------------------------------------
-function check_media() {
-    clear
-    echo -e "================================================="
-    echo -e "   流媒体解锁检测 (基于 RegionRestrictionCheck)"
+    echo -e "   全能 IP 质量与解锁体检 (基于 IP.Check.Place)"
     echo -e "================================================="
     echo -e "${GREEN}1.${PLAIN} 检测 ${SKYBLUE}本机原生 IP${PLAIN} (Direct)"
     echo -e "${GREEN}2.${PLAIN} 检测 ${SKYBLUE}WARP 代理 IP${PLAIN} (通过端口 40000)"
     echo -e "-------------------------------------------------"
     echo -e "${GREEN}0.${PLAIN} 返回主菜单"
     echo -e "================================================="
-    read -p "请选择检测模式: " media_type
+    read -p "请选择检测模式: " check_type
 
-    case "$media_type" in
+    case "$check_type" in
         1)
-            echo -e "${GREEN}> 正在启动检测脚本 (本机直连)...${PLAIN}"
-            apt install -y curl >/dev/null 2>&1
-            bash <(curl -L -s https://raw.githubusercontent.com/lmc999/RegionRestrictionCheck/main/check.sh)
+            echo -e "${GREEN}> 正在启动全能体检脚本 (本机直连)...${PLAIN}"
+            # 安装必要依赖以防脚本报错
+            apt install -y curl wget jq >/dev/null 2>&1
+            bash <(curl -Ls IP.Check.Place)
             ;;
         2)
-            echo -e "${GREEN}> 正在启动检测脚本 (通过 WARP 代理)...${PLAIN}"
+            echo -e "${GREEN}> 正在启动全能体检脚本 (通过 WARP 代理)...${PLAIN}"
             if ! ss -nltp | grep -q "40000"; then
                 echo -e "${RED}错误: 未检测到 WARP 端口 (40000)。请先安装 WARP！${PLAIN}"
                 read -p "按回车键返回..."
                 return
             fi
+            # 临时设置代理，让体检脚本走 WARP 通道
             export ALL_PROXY=socks5://127.0.0.1:40000
-            bash <(curl -L -s https://raw.githubusercontent.com/lmc999/RegionRestrictionCheck/main/check.sh)
+            bash <(curl -Ls IP.Check.Place)
             unset ALL_PROXY
             ;;
         0) return ;;
         *) echo -e "${RED}输入错误${PLAIN}" ;;
     esac
+    
     echo ""
-    read -p "检测完成，按回车键返回..."
+    read -p "体检完成，按回车键返回..."
 }
 
 # ---------------------------------------------------------
@@ -275,7 +216,7 @@ function show_uninstall_menu() {
 function show_menu() {
     clear
     echo -e "================================================="
-    echo -e "   VPS 运维工具箱 V5.6 ${YELLOW}[功能增强版]${PLAIN}"
+    echo -e "   VPS 运维工具箱 V5.7 ${YELLOW}[全能体检版]${PLAIN}"
     echo -e "   存储目录: ${SKYBLUE}$BASE_DIR${PLAIN}"
     echo -e "================================================="
     echo -e "${GREEN}1.${PLAIN} 系统初始化 (BBR/Swap/时区)"
@@ -285,12 +226,11 @@ function show_menu() {
     echo -e "${GREEN}4.${PLAIN} ${SKYBLUE}部署 Lucky (反代/端口转发)${PLAIN}"
     echo -e "${GREEN}5.${PLAIN} ${SKYBLUE}部署 DPanel (Docker面板)${PLAIN}"
     echo -e "-------------------------------------------------"
-    echo -e "${GREEN}6.${PLAIN} ${YELLOW}IP 质量检测 (纯净度/欺诈值)${PLAIN} ${YELLOW}*NEW*${PLAIN}"
-    echo -e "${GREEN}7.${PLAIN} ${YELLOW}流媒体解锁检测 (Netflix/YT)${PLAIN} ${YELLOW}*NEW*${PLAIN}"
+    echo -e "${GREEN}6.${PLAIN} ${YELLOW}全能 IP 体检 (纯净度/解锁)${PLAIN} ${YELLOW}*推荐*${PLAIN}"
     echo -e "-------------------------------------------------"
-    echo -e "${GREEN}8.${PLAIN} 安全加固 (智能防火墙)"
-    echo -e "${GREEN}9.${PLAIN} 磁盘/日志清理"
-    echo -e "${GREEN}10.${PLAIN} ${RED}卸载应用 ->${PLAIN}"
+    echo -e "${GREEN}7.${PLAIN} 安全加固 (智能防火墙)"
+    echo -e "${GREEN}8.${PLAIN} 磁盘/日志清理"
+    echo -e "${GREEN}9.${PLAIN} ${RED}卸载应用 ->${PLAIN}"
     echo -e "================================================="
     echo -e "${GREEN}0.${PLAIN} 退出"
     echo -e "================================================="
@@ -301,11 +241,10 @@ function show_menu() {
         3) install_warp ;;
         4) install_lucky ;;
         5) install_dpanel ;;
-        6) check_ip_quality ;;
-        7) check_media ;;
-        8) install_security ;;
-        9) ops_cleanup ;;
-        10) show_uninstall_menu ;;
+        6) check_all_info ;;
+        7) install_security ;;
+        8) ops_cleanup ;;
+        9) show_uninstall_menu ;;
         0) exit 0 ;;
         *) echo -e "${RED}输入错误${PLAIN}" ;;
     esac
