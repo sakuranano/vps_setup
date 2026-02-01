@@ -1,4 +1,3 @@
-```markdown
 # 🛠️ VPS 运维工具箱 (Lightweight VPS Toolbox)
 
 **专为 Debian 12 / Ubuntu 22+ 设计的轻量级、全能型 VPS 运维脚本。**
@@ -13,7 +12,6 @@
 
 ```bash
 apt update && apt install -y wget && wget -O vps_setup.sh [https://raw.githubusercontent.com/sakuranano/vps_setup/refs/heads/main/vps_setup.sh](https://raw.githubusercontent.com/sakuranano/vps_setup/refs/heads/main/vps_setup.sh) && chmod +x vps_setup.sh && ./vps_setup.sh
-
 ```
 
 *(如果下载网络不佳，请检查 VPS 的 DNS 设置或网络连接)*
@@ -122,7 +120,3 @@ A: 脚本内置了卸载模块。运行脚本 -> 选择 `10` -> 选择对应应�
 ---
 
 **Made with ❤️ for Lightweight VPS**
-
-```
-
-```
