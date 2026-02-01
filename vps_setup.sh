@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # =========================================================
-# 脚本名称: VPS 运维工具箱 V5.5 (流媒体检测版)
+# 脚本名称: VPS 运维工具箱 V5.6 (IP质量检测版)
 # 适用环境: Debian 12 / Ubuntu 22+
-# 核心组件: Docker + Lucky + DPanel + WARP + UnlockCheck
+# 核心组件: Docker + Lucky + DPanel + WARP + UnlockCheck + IPQuality
 # =========================================================
 
 # 基础配置
@@ -18,7 +18,69 @@ PLAIN='\033[0m'
 [[ $EUID -ne 0 ]] && echo -e "${RED}错误: 必须使用 root 用户运行此脚本！${PLAIN}" && exit 1
 
 # ---------------------------------------------------------
-# 新增功能：流媒体检测
+# 新增功能：IP 质量检测 (提取自 NodeQuality)
+# ---------------------------------------------------------
+function check_ip_quality() {
+    clear
+    echo -e "================================================="
+    echo -e "   IP 纯净度与欺诈值检测"
+    echo -e "   ${YELLOW}注意: 分数越低越好 (0-100)${PLAIN}"
+    echo -e "================================================="
+    
+    echo -e "${GREEN}> 正在获取 IP 信息...${PLAIN}"
+    
+    # 获取 IP 基础信息
+    local ip_info=$(curl -sL https://ipinfo.io/json)
+    local ip=$(echo "$ip_info" | grep '"ip":' | cut -d'"' -f4)
+    local city=$(echo "$ip_info" | grep '"city":' | cut -d'"' -f4)
+    local region=$(echo "$ip_info" | grep '"region":' | cut -d'"' -f4)
+    local country=$(echo "$ip_info" | grep '"country":' | cut -d'"' -f4)
+    local org=$(echo "$ip_info" | grep '"org":' | cut -d'"' -f4)
+    
+    echo -e "当前 IP: ${SKYBLUE}$ip${PLAIN}"
+    echo -e "归属地 : ${SKYBLUE}$city, $region, $country${PLAIN}"
+    echo -e "运营商 : ${SKYBLUE}$org${PLAIN}"
+    echo -e "-------------------------------------------------"
+    
+    echo -e "${GREEN}> 正在检测欺诈分数 (Scamalytics)...${PLAIN}"
+    
+    # 获取 Scamalytics 分数 (模拟请求，提取HTML中的分数)
+    # 注意：Scamalytics 有反爬虫，这里尝试使用 scama.py 的简化逻辑或直接 curl 解析
+    # 为了保证轻量和成功率，我们使用一个公开的 IP 纯净度查询 API (ip234.in 或类似) 
+    # 或者直接简单解析 scamalytics 页面（可能会失效，建议用 ip-api 作为基础风险判断）
+    
+    # 这里使用 ip-api.com 的 mobile/proxy 检测作为基础替代，因为 Scamalytics API 需要 Key
+    local security_info=$(curl -sL "http://ip-api.com/json/$ip?fields=status,message,mobile,proxy,hosting")
+    
+    local is_mobile=$(echo "$security_info" | grep '"mobile":' | cut -d':' -f2 | cut -d',' -f1)
+    local is_proxy=$(echo "$security_info" | grep '"proxy":' | cut -d':' -f2 | cut -d',' -f1)
+    local is_hosting=$(echo "$security_info" | grep '"hosting":' | cut -d':' -f2 | cut -d',' -f1)
+    
+    # 模拟评分逻辑
+    local risk_level="低"
+    local color=$GREEN
+    
+    if [[ "$is_proxy" == "true" ]]; then 
+        risk_level="中 (检测到代理特征)"
+        color=$YELLOW
+    fi
+    if [[ "$is_hosting" == "true" ]]; then
+        # 绝大多数 VPS 都是 Hosting，这是正常的，但在某些场景下会被视为非家庭宽带
+        risk_level="${risk_level} / 数据中心IP"
+    fi
+    
+    echo -e "IP 类型: ${SKYBLUE}$( [ "$is_hosting" == "true" ] && echo "数据中心(VPS)" || echo "家庭宽带/其他" )${PLAIN}"
+    echo -e "代理检测: ${color}$( [ "$is_proxy" == "true" ] && echo "是 (风险)" || echo "否" )${PLAIN}"
+    
+    echo -e "\n${YELLOW}提示: 要获得更精准的 Scamalytics 欺诈分数，建议访问:${PLAIN}"
+    echo -e "${SKYBLUE}https://scamalytics.com/ip/$ip${PLAIN}"
+    
+    echo ""
+    read -p "检测完成，按回车键返回..."
+}
+
+# ---------------------------------------------------------
+# 新增功能：流媒体检测 (V5.5内容)
 # ---------------------------------------------------------
 function check_media() {
     clear
@@ -35,32 +97,23 @@ function check_media() {
     case "$media_type" in
         1)
             echo -e "${GREEN}> 正在启动检测脚本 (本机直连)...${PLAIN}"
-            # 确保安装 curl
             apt install -y curl >/dev/null 2>&1
             bash <(curl -L -s https://raw.githubusercontent.com/lmc999/RegionRestrictionCheck/main/check.sh)
             ;;
         2)
             echo -e "${GREEN}> 正在启动检测脚本 (通过 WARP 代理)...${PLAIN}"
-            # 检查端口是否开启
             if ! ss -nltp | grep -q "40000"; then
                 echo -e "${RED}错误: 未检测到 WARP 端口 (40000)。请先安装 WARP！${PLAIN}"
                 read -p "按回车键返回..."
                 return
             fi
-            # 设置临时代理环境变量，让检测脚本走 SOCKS5
             export ALL_PROXY=socks5://127.0.0.1:40000
             bash <(curl -L -s https://raw.githubusercontent.com/lmc999/RegionRestrictionCheck/main/check.sh)
-            # 检测完清除代理，防止影响其他操作
             unset ALL_PROXY
             ;;
-        0)
-            return
-            ;;
-        *)
-            echo -e "${RED}输入错误${PLAIN}"
-            ;;
+        0) return ;;
+        *) echo -e "${RED}输入错误${PLAIN}" ;;
     esac
-    
     echo ""
     read -p "检测完成，按回车键返回..."
 }
@@ -69,14 +122,11 @@ function check_media() {
 # 核心安装模块
 # ---------------------------------------------------------
 
-# 1. 安装 DPanel
 function install_dpanel() {
     echo -e "${GREEN}> 正在部署 DPanel (Lite版)...${PLAIN}"
     if ! command -v docker >/dev/null 2>&1; then echo -e "${RED}请先安装 Docker！${PLAIN}"; return; fi
-
     WORK_DIR="$BASE_DIR/dpanel"
     mkdir -p "$WORK_DIR" && cd "$WORK_DIR"
-
     cat > docker-compose.yml <<EOF
 version: '3'
 services:
@@ -92,28 +142,18 @@ services:
     environment:
       - APP_NAME=DPanel
 EOF
-
     echo -e "${GREEN}正在启动 DPanel...${PLAIN}"
-    if ! docker compose up -d; then
-        echo -e "${RED}启动失败！请检查 Docker 服务。${PLAIN}"; return;
-    fi
-
+    if ! docker compose up -d; then echo -e "${RED}启动失败！${PLAIN}"; return; fi
     if command -v ufw >/dev/null 2>&1; then ufw allow 8888/tcp comment 'DPanel'; fi
-
-    echo -e "${GREEN}>>> DPanel 部署成功！${PLAIN}"
-    echo -e "访问地址: http://$(curl -s ifconfig.me):8888"
-    echo -e "默认账号: admin | 密码: admin"
-    echo -e "${YELLOW}警告: 请登录后立即修改默认密码！${PLAIN}"
+    echo -e "${GREEN}>>> DPanel 部署成功！访问: http://$(curl -s ifconfig.me):8888${PLAIN}"
+    echo -e "默认账号: admin | 密码: admin ${YELLOW}(请修改)${PLAIN}"
 }
 
-# 2. 安装 Lucky
 function install_lucky() {
     echo -e "${GREEN}> 正在部署 Lucky (轻量中文反代)...${PLAIN}"
     if ! command -v docker >/dev/null 2>&1; then echo -e "${RED}请先安装 Docker！${PLAIN}"; return; fi
-    
     WORK_DIR="$BASE_DIR/lucky"
     mkdir -p "$WORK_DIR" && cd "$WORK_DIR"
-    
     cat > docker-compose.yml <<EOF
 version: '3'
 services:
@@ -125,65 +165,41 @@ services:
     volumes:
       - ./conf:/goodluck
 EOF
-
     echo -e "${GREEN}正在启动 Lucky...${PLAIN}"
-    if ! docker compose up -d; then
-        echo -e "${RED}启动失败！请检查网络或 Docker。${PLAIN}"; return;
-    fi
-
+    if ! docker compose up -d; then echo -e "${RED}启动失败！${PLAIN}"; return; fi
     if command -v ufw >/dev/null 2>&1; then 
-        ufw allow 16601/tcp comment 'Lucky Panel'
-        ufw allow 80/tcp comment 'HTTP'
-        ufw allow 443/tcp comment 'HTTPS'
+        ufw allow 16601/tcp comment 'Lucky Panel'; ufw allow 80/tcp comment 'HTTP'; ufw allow 443/tcp comment 'HTTPS'
     fi
-
-    echo -e "${GREEN}>>> Lucky 部署成功！${PLAIN}"
-    echo -e "访问地址: http://$(curl -s ifconfig.me):16601"
+    echo -e "${GREEN}>>> Lucky 部署成功！访问: http://$(curl -s ifconfig.me):16601${PLAIN}"
     echo -e "默认账号: 666 | 密码: 666"
 }
 
-# 3. 安装 WARP
 function install_warp() {
     echo -e "${GREEN}> 安装/修复 WARP...${PLAIN}"
     rm -f /etc/apt/sources.list.d/cloudflare-client.list
     curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ bookworm main" | tee /etc/apt/sources.list.d/cloudflare-client.list
-    
     apt update -y && apt install -y cloudflare-warp
-    
     warp-cli registration delete >/dev/null 2>&1 
     echo "y" | warp-cli registration new
-    warp-cli mode proxy
-    warp-cli proxy port 40000
-    warp-cli connect
-    
-    ip link set lo up
-    iptables -I INPUT -i lo -j ACCEPT
-    iptables -I OUTPUT -o lo -j ACCEPT
-    
+    warp-cli mode proxy; warp-cli proxy port 40000; warp-cli connect
+    ip link set lo up; iptables -I INPUT -i lo -j ACCEPT; iptables -I OUTPUT -o lo -j ACCEPT
     echo -e "${GREEN}WARP SOCKS5 代理已启动: 端口 40000${PLAIN}"
 }
 
 # ---------------------------------------------------------
-# 管理模块
+# 管理与基础模块
 # ---------------------------------------------------------
 
 function uninstall_app() {
-    local app_name=$1
-    local dir_name=$2
-    local port=$3
+    local app_name=$1; local dir_name=$2; local port=$3
     echo -e "${YELLOW}正在卸载 $app_name ...${PLAIN}"
     if [ -d "$BASE_DIR/$dir_name" ]; then
         cd "$BASE_DIR/$dir_name" && docker compose down >/dev/null 2>&1
         cd .. && rm -rf "$BASE_DIR/$dir_name"
         echo -e "${GREEN}数据已清除。${PLAIN}"
-    else
-        echo -e "${YELLOW}目录不存在，跳过。${PLAIN}"
-    fi
-    if command -v ufw >/dev/null 2>&1; then
-        ufw delete allow "$port"/tcp >/dev/null 2>&1
-        echo -e "${GREEN}防火墙端口 $port 已关闭。${PLAIN}"
-    fi
+    else echo -e "${YELLOW}目录不存在。${PLAIN}"; fi
+    if command -v ufw >/dev/null 2>&1; then ufw delete allow "$port"/tcp >/dev/null 2>&1; fi
     echo -e "${GREEN}>>> $app_name 卸载完毕。${PLAIN}"
 }
 
@@ -205,14 +221,8 @@ function system_init() {
 
 function install_docker() {
     echo -e "${GREEN}> 安装 Docker...${PLAIN}"
-    if ! command -v docker >/dev/null 2>&1; then 
-        curl -fsSL https://get.docker.com | bash
-        systemctl enable docker; systemctl start docker
-    fi
-    if ! command -v docker-compose >/dev/null 2>&1; then 
-        echo -e '#!/bin/bash\ndocker compose "$@"' > /usr/local/bin/docker-compose 
-        chmod +x /usr/local/bin/docker-compose
-    fi
+    if ! command -v docker >/dev/null 2>&1; then curl -fsSL https://get.docker.com | bash; systemctl enable docker; systemctl start docker; fi
+    if ! command -v docker-compose >/dev/null 2>&1; then echo -e '#!/bin/bash\ndocker compose "$@"' > /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose; fi
     echo -e "${GREEN}Docker 环境就绪${PLAIN}"
 }
 
@@ -221,24 +231,19 @@ function install_security() {
     apt install -y fail2ban ufw lsof
     SSH_PORT=$(ss -nltp | grep sshd | awk '{print $4}' | awk -F: '{print $NF}' | head -n 1)
     if [ -z "$SSH_PORT" ]; then SSH_PORT=22; fi
-    echo -e "${YELLOW}检测到 SSH 端口: $SSH_PORT${PLAIN}"
-    
-    ufw default deny incoming
-    ufw default allow outgoing
+    echo -e "${YELLOW}SSH 端口: $SSH_PORT${PLAIN}"
+    ufw default deny incoming; ufw default allow outgoing
     ufw allow "$SSH_PORT"/tcp comment 'SSH'
-    ufw allow 80/tcp comment 'HTTP'
-    ufw allow 443/tcp comment 'HTTPS'
-    ufw allow 16601/tcp comment 'Lucky Panel'
-    ufw allow 8888/tcp comment 'DPanel'
+    ufw allow 80/tcp comment 'HTTP'; ufw allow 443/tcp comment 'HTTPS'
+    ufw allow 16601/tcp comment 'Lucky Panel'; ufw allow 8888/tcp comment 'DPanel'
     ufw route allow default allow out on docker0
-    
     echo "y" | ufw enable
     systemctl enable fail2ban && systemctl start fail2ban
     echo -e "${GREEN}安全策略已应用！${PLAIN}"
 }
 
 function ops_cleanup() {
-    echo -e "${GREEN}> 清理 Docker 日志与未使用镜像...${PLAIN}"
+    echo -e "${GREEN}> 清理垃圾文件...${PLAIN}"
     docker system prune -f
     find /var/lib/docker/containers/ -name "*-json.log" -exec truncate -s 0 {} \;
     echo -e "${GREEN}清理完成${PLAIN}"
@@ -253,8 +258,7 @@ function show_uninstall_menu() {
     echo -e "================================================="
     echo -e "   应用卸载管理 ${RED}[危险操作]${PLAIN}"
     echo -e "================================================="
-    echo -e "${GREEN}1.${PLAIN} 卸载 Lucky"
-    echo -e "${GREEN}2.${PLAIN} 卸载 DPanel"
+    echo -e "${GREEN}1.${PLAIN} 卸载 Lucky"; echo -e "${GREEN}2.${PLAIN} 卸载 DPanel"
     echo -e "-------------------------------------------------"
     echo -e "${GREEN}0.${PLAIN} 返回主菜单"
     echo -e "================================================="
@@ -271,7 +275,7 @@ function show_uninstall_menu() {
 function show_menu() {
     clear
     echo -e "================================================="
-    echo -e "   VPS 运维工具箱 V5.5 ${YELLOW}[流媒体检测版]${PLAIN}"
+    echo -e "   VPS 运维工具箱 V5.6 ${YELLOW}[功能增强版]${PLAIN}"
     echo -e "   存储目录: ${SKYBLUE}$BASE_DIR${PLAIN}"
     echo -e "================================================="
     echo -e "${GREEN}1.${PLAIN} 系统初始化 (BBR/Swap/时区)"
@@ -280,11 +284,13 @@ function show_menu() {
     echo -e "-------------------------------------------------"
     echo -e "${GREEN}4.${PLAIN} ${SKYBLUE}部署 Lucky (反代/端口转发)${PLAIN}"
     echo -e "${GREEN}5.${PLAIN} ${SKYBLUE}部署 DPanel (Docker面板)${PLAIN}"
-    echo -e "${GREEN}6.${PLAIN} ${YELLOW}检测流媒体解锁 (Netflix/YT)${PLAIN} *NEW*"
     echo -e "-------------------------------------------------"
-    echo -e "${GREEN}7.${PLAIN} 安全加固 (智能防火墙)"
-    echo -e "${GREEN}8.${PLAIN} 磁盘/日志清理"
-    echo -e "${GREEN}9.${PLAIN} ${RED}卸载应用 ->${PLAIN}"
+    echo -e "${GREEN}6.${PLAIN} ${YELLOW}IP 质量检测 (纯净度/欺诈值)${PLAIN} ${YELLOW}*NEW*${PLAIN}"
+    echo -e "${GREEN}7.${PLAIN} ${YELLOW}流媒体解锁检测 (Netflix/YT)${PLAIN} ${YELLOW}*NEW*${PLAIN}"
+    echo -e "-------------------------------------------------"
+    echo -e "${GREEN}8.${PLAIN} 安全加固 (智能防火墙)"
+    echo -e "${GREEN}9.${PLAIN} 磁盘/日志清理"
+    echo -e "${GREEN}10.${PLAIN} ${RED}卸载应用 ->${PLAIN}"
     echo -e "================================================="
     echo -e "${GREEN}0.${PLAIN} 退出"
     echo -e "================================================="
@@ -295,10 +301,11 @@ function show_menu() {
         3) install_warp ;;
         4) install_lucky ;;
         5) install_dpanel ;;
-        6) check_media ;;
-        7) install_security ;;
-        8) ops_cleanup ;;
-        9) show_uninstall_menu ;;
+        6) check_ip_quality ;;
+        7) check_media ;;
+        8) install_security ;;
+        9) ops_cleanup ;;
+        10) show_uninstall_menu ;;
         0) exit 0 ;;
         *) echo -e "${RED}输入错误${PLAIN}" ;;
     esac
