@@ -1,9 +1,11 @@
 #!/bin/bash
 
 # =========================================================
-# 脚本名称: VPS 运维工具箱 V6.1 (硬件看板版)
+# 脚本名称: VPS 运维工具箱 V6.2 (CPU显示修复版)
 # 适用环境: Debian 12 / Ubuntu 22+
-# 核心组件: Docker + Lucky + DPanel + WARP + IP.Check + HardwareInfo
+# 更新日志: 
+#   - V6.2: 修复系统看板 CPU 100% 显示 bug (改用 vmstat 采样)
+#   - V6.1: 新增硬件配置看板
 # =========================================================
 
 # 基础配置
@@ -28,13 +30,14 @@ function get_app_status() {
 }
 
 # ---------------------------------------------------------
-# 核心功能：系统配置看板 (提取自 ecs.sh 逻辑)
+# 核心功能：系统配置看板 (修复 CPU 算法)
 # ---------------------------------------------------------
 function check_system_info() {
     clear
     echo -e "================================================="
     echo -e "           VPS 硬件配置与资源看板"
     echo -e "================================================="
+    echo -e "${YELLOW}正在采样系统数据 (约 1 秒)...${PLAIN}"
     
     # 1. 系统基础信息
     os_info=$(grep PRETTY_NAME /etc/os-release | cut -d '"' -f 2)
@@ -43,25 +46,31 @@ function check_system_info() {
     virt_info=$(systemd-detect-virt 2>/dev/null || echo "unknown")
     tcp_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
     
-    # 2. CPU 信息
+    # 2. CPU 信息 (修复点：使用 vmstat 采样 1秒 计算，更精准)
+    # 安装 procps 确保 vmstat 可用 (通常已预装)
+    if ! command -v vmstat >/dev/null 2>&1; then apt-get install -y procps >/dev/null 2>&1; fi
+    
     cpu_model=$(awk -F': ' '/model name/{print $2; exit}' /proc/cpuinfo)
     [ -z "$cpu_model" ] && cpu_model=$(lscpu | grep 'Model name' | sed 's/Model name:\s*//')
     cpu_cores=$(awk -F': ' '/processor/{print $2}' /proc/cpuinfo | wc -l)
     cpu_freq=$(awk -F': ' '/cpu MHz/{print $2; exit}' /proc/cpuinfo)
     [ -z "$cpu_freq" ] && cpu_freq="未知"
     
-    # AES 指令集检测 (影响节点加密性能)
+    # 计算 CPU 使用率 (100 - idle)
+    cpu_idle=$(vmstat 1 2 | tail -1 | awk '{print $15}')
+    cpu_usage=$(echo "$cpu_idle" | awk '{print 100 - $1"%"}' 2>/dev/null)
+    
+    # AES 指令集检测
     if grep -q "aes" /proc/cpuinfo; then aes_status="${GREEN}✅ 启用${PLAIN}"; else aes_status="${RED}❌ 未启用${PLAIN}"; fi
     
     # 3. 内存与硬盘
-    # 内存
     mem_total_mb=$(free -m | awk '/Mem:/ {print $2}')
     mem_used_mb=$(free -m | awk '/Mem:/ {print $3}')
     mem_used_rate=$(awk 'BEGIN{printf "%.1f", ('$mem_used_mb'/'$mem_total_mb')*100}')
-    # Swap
+    
     swap_total_mb=$(free -m | awk '/Swap:/ {print $2}')
     swap_used_mb=$(free -m | awk '/Swap:/ {print $3}')
-    # 硬盘 (根目录)
+    
     disk_total=$(df -h / | awk '/\// {print $2}')
     disk_used=$(df -h / | awk '/\// {print $3}')
     disk_rate=$(df -h / | awk '/\// {print $5}')
@@ -71,6 +80,10 @@ function check_system_info() {
     [ -z "$ipv4" ] && ipv4="无 IPv4"
 
     # --- 输出展示 ---
+    clear
+    echo -e "================================================="
+    echo -e "           VPS 硬件配置与资源看板"
+    echo -e "================================================="
     echo -e "系统版本 : ${SKYBLUE}$os_info${PLAIN}"
     echo -e "内核版本 : ${SKYBLUE}$kernel_info${PLAIN}"
     echo -e "虚拟架构 : ${SKYBLUE}$virt_info${PLAIN}"
@@ -78,7 +91,7 @@ function check_system_info() {
     echo -e "-------------------------------------------------"
     echo -e "CPU 型号 : ${SKYBLUE}$cpu_model${PLAIN}"
     echo -e "CPU 核心 : ${SKYBLUE}$cpu_cores 核${PLAIN} (主频: ${cpu_freq} MHz)"
-    echo -e "AES 加速 : $aes_status"
+    echo -e "CPU 占用 : ${SKYBLUE}$cpu_usage${PLAIN} (AES: $aes_status)"
     echo -e "-------------------------------------------------"
     echo -e "物理内存 : ${SKYBLUE}$mem_used_mb / $mem_total_mb MB${PLAIN} (占用: ${mem_used_rate}%)"
     echo -e "虚拟内存 : ${SKYBLUE}$swap_used_mb / $swap_total_mb MB${PLAIN} (Swap)"
@@ -183,7 +196,8 @@ function uninstall_app() {
 
 function system_init() {
     echo -e "${GREEN}> 系统初始化...${PLAIN}"
-    apt update -y && apt install -y curl wget git htop vim unzip socat tar gnupg lsb-release lsof jq
+    # 增加 procps 依赖 (包含 vmstat)
+    apt update -y && apt install -y curl wget git htop vim unzip socat tar gnupg lsb-release lsof jq procps
     timedatectl set-timezone Asia/Shanghai
     if ! grep -q "bbr" /etc/sysctl.conf; then
         echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
@@ -247,7 +261,7 @@ function show_menu() {
     get_app_status
     clear
     echo -e "================================================="
-    echo -e "   VPS 运维工具箱 V6.1 ${YELLOW}[硬件看板版]${PLAIN}"
+    echo -e "   VPS 运维工具箱 V6.2 ${YELLOW}[CPU修复版]${PLAIN}"
     echo -e "   存储: ${SKYBLUE}$BASE_DIR${PLAIN}"
     echo -e "================================================="
     echo -e "${GREEN}1.${PLAIN} 系统初始化 (BBR/Swap)     ${YELLOW}*建议首选*${PLAIN}"
