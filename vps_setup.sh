@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # =========================================================
-# 脚本名称: VPS 运维工具箱 V5.1 (DPanel 最终版)
+# 脚本名称: VPS 运维工具箱 V5.2 (Lucky 轻量版)
 # 适用环境: Debian 12 / Ubuntu 22+
 # 更新日志: 
-#   - V5.1: 修复 WARP 注册交互卡死问题
-#   - V5.1: 增加 SSH 端口自动检测 (防止 UFW 封锁自己)
-#   - V5.1: 统一使用 docker compose 官方语法
+#   - V5.2: 替换 NPM 为 Lucky (全中文/极低内存/多功能)
+#   - V5.1: 修复 WARP 交互卡死 & 智能 SSH 端口检测
+#   - V5.0: 集成 DPanel Lite & 目录规范化
 # =========================================================
 
 # 基础配置
@@ -97,7 +97,7 @@ function install_docker() {
         systemctl enable docker
         systemctl start docker
     fi
-    # 依然添加别名以防万一，但脚本内部优先用官方命令
+    # 依然添加别名以防万一
     if ! command -v docker-compose >/dev/null 2>&1; then 
         echo -e '#!/bin/bash\ndocker compose "$@"' > /usr/local/bin/docker-compose 
         chmod +x /usr/local/bin/docker-compose
@@ -105,30 +105,42 @@ function install_docker() {
     echo -e "${GREEN}Docker 准备就绪${PLAIN}"
 }
 
-# 4. NPM 安装
-function install_npm() {
-    echo -e "${GREEN}> 部署 NPM...${PLAIN}"
-    if ! command -v docker >/dev/null 2>&1; then echo "请先安装 Docker"; return; fi
-    WORK_DIR="$BASE_DIR/nginx_proxy_manager"
+# 4. 安装 Lucky (轻量级中文反代神器)
+function install_lucky() {
+    echo -e "${GREEN}> 正在部署 Lucky (轻量中文反代)...${PLAIN}"
+    if ! command -v docker >/dev/null 2>&1; then echo -e "${RED}请先安装 Docker！${PLAIN}"; return; fi
+    
+    WORK_DIR="$BASE_DIR/lucky"
     mkdir -p "$WORK_DIR" && cd "$WORK_DIR"
     
+    # Lucky 使用 host 模式性能最好，且方便管理端口
     cat > docker-compose.yml <<EOF
-version: '3.8'
+version: '3'
 services:
-  app:
-    image: 'jc21/nginx-proxy-manager:latest'
-    restart: unless-stopped
-    ports:
-      - '80:80'
-      - '81:81'
-      - '443:443'
+  lucky:
+    image: gdysthen/lucky:latest
+    container_name: lucky
+    restart: always
+    network_mode: host
     volumes:
-      - ./data:/data
-      - ./letsencrypt:/etc/letsencrypt
+      - ./conf:/goodluck
 EOF
+
+    echo -e "${GREEN}正在启动 Lucky...${PLAIN}"
     docker compose up -d
-    if command -v ufw >/dev/null 2>&1; then ufw allow 80; ufw allow 443; ufw allow 81; fi
-    echo -e "${GREEN}NPM 部署成功: http://$(curl -s ifconfig.me):81${PLAIN}"
+
+    # 配置防火墙 (开放 16601 管理口，以及 80/443 web口)
+    if command -v ufw >/dev/null 2>&1; then 
+        ufw allow 16601/tcp comment 'Lucky Panel'
+        ufw allow 80/tcp comment 'HTTP'
+        ufw allow 443/tcp comment 'HTTPS'
+    fi
+
+    echo -e "${GREEN}>>> Lucky 部署成功！${PLAIN}"
+    echo -e "访问地址: http://$(curl -s ifconfig.me):16601"
+    echo -e "默认账号: 666"
+    echo -e "默认密码: 666"
+    echo -e "${YELLOW}警告: 这是一个超级强大的工具，请登录后务必修改密码！${PLAIN}"
 }
 
 # 5. WARP 安装
@@ -162,7 +174,7 @@ function install_security() {
     apt install -y fail2ban ufw lsof
     
     # --- 智能检测 SSH 端口 ---
-    # 获取当前 SSHD 正在监听的端口，如果获取失败则默认 22
+    # 获取当前 SSHD 正在监听的端口
     SSH_PORT=$(ss -nltp | grep sshd | awk '{print $4}' | awk -F: '{print $NF}' | head -n 1)
     if [ -z "$SSH_PORT" ]; then SSH_PORT=22; fi
     
@@ -172,13 +184,11 @@ function install_security() {
     ufw default deny incoming
     ufw default allow outgoing
     
-    # 放行检测到的 SSH 端口
+    # 放行端口
     ufw allow "$SSH_PORT"/tcp comment 'SSH'
-    
-    # 放行其他服务
     ufw allow 80/tcp comment 'HTTP'
     ufw allow 443/tcp comment 'HTTPS'
-    ufw allow 81/tcp comment 'NPM Panel'
+    ufw allow 16601/tcp comment 'Lucky Panel'
     ufw allow 8888/tcp comment 'DPanel' 
     ufw route allow default allow out on docker0
     
@@ -202,12 +212,12 @@ function ops_cleanup() {
 function show_menu() {
     clear
     echo -e "================================================="
-    echo -e "   VPS 运维工具箱 V5.1 ${YELLOW}[Final Stable]${PLAIN}"
+    echo -e "   VPS 运维工具箱 V5.2 ${YELLOW}[Lucky 中文版]${PLAIN}"
     echo -e "   存储目录: ${SKYBLUE}$BASE_DIR${PLAIN}"
     echo -e "================================================="
     echo -e "${GREEN}1.${PLAIN} 系统初始化 (BBR/Swap/时区)"
     echo -e "${GREEN}2.${PLAIN} 安装 Docker 环境"
-    echo -e "${GREEN}3.${PLAIN} 部署 NPM (反向代理面板)"
+    echo -e "${GREEN}3.${PLAIN} ${SKYBLUE}部署 Lucky (中文反代/端口转发)${PLAIN}"
     echo -e "${GREEN}4.${PLAIN} 安装 WARP (IP隐藏/SOCKS5)"
     echo -e "-------------------------------------------------"
     echo -e "${GREEN}5.${PLAIN} ${SKYBLUE}部署 DPanel (轻量级 Docker管理)${PLAIN}"
@@ -221,7 +231,7 @@ function show_menu() {
     case "$num" in
         1) system_init ;;
         2) install_docker ;;
-        3) install_npm ;;
+        3) install_lucky ;;
         4) install_warp ;;
         5) install_dpanel ;;
         6) install_security ;;
