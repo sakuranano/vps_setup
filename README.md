@@ -1,9 +1,8 @@
-```markdown
 # 🛠️ VPS 运维工具箱 (Lightweight VPS Toolbox)
 
 **专为 Debian 12 / Ubuntu 22+ 设计的轻量级、全能型 VPS 运维脚本。**
 
-抛弃臃肿，追求极致的资源利用率。集成了 Docker 环境、轻量化管理面板、反向代理神器、网络优化及安全加固功能。V6.2 版本更是加入了精准的系统资源看板与 IP 质量体检。
+抛弃臃肿，追求极致的资源利用率。集成了 Docker 环境、轻量化管理面板、反向代理神器、网络优化及安全加固功能。V6.4 版本更是加入了精准的系统资源看板、IP 质量体检以及一键 DD 重装系统功能。
 
 ---
 
@@ -13,6 +12,7 @@
 
 ```bash
 apt update && apt install -y wget && wget -O vps_setup.sh [https://raw.githubusercontent.com/sakuranano/vps_setup/refs/heads/main/vps_setup.sh](https://raw.githubusercontent.com/sakuranano/vps_setup/refs/heads/main/vps_setup.sh) && chmod +x vps_setup.sh && ./vps_setup.sh
+```
 (如果下载网络不佳，请检查 VPS 的 DNS 设置或网络连接)
 
 ✨ 核心功能 (Features)
@@ -53,10 +53,10 @@ WARP SOCKS5 代理：一键配置 Cloudflare WARP (端口 40000)。
 
 🌍 全能 IP 体检：集成 IP.Check.Place，检测 IP 欺诈值、黑名单状态及流媒体解锁。
 
-6. 安全加固 (Security)
-智能防火墙 (UFW)：自动识别当前 SSH 端口并放行，默认拒绝所有入站连接，仅开放必要端口 (Web/面板)。
+6. 高级系统管理
+🛡️ 安全加固：自动识别当前 SSH 端口并放行，默认拒绝所有入站连接，仅开放必要端口；集成 Fail2Ban 防止爆破。
 
-防爆破 (Fail2Ban)：自动封禁恶意 SSH 扫描 IP。
+🔄 一键重装 (DD)：集成 InstallNET (移植自 kejilion)，支持一键将 VPS 重装为纯净版 Debian 12。（仅限 KVM/Xen 架构）
 
 📝 默认端口与账号 (Default Info)
 ⚠️ 警告：安装完成后，请务必尽快修改默认密码！
@@ -68,7 +68,7 @@ WARP Proxy	40000	127.0.0.1:40000	无	无 (SOCKS5)
 🖥️ 脚本菜单预览
 Plaintext
 =================================================
-   VPS 运维工具箱 V6.2 [CPU修复版]
+   VPS 运维工具箱 V6.4 [Kejilion重装版]
    存储: /opt/docker_data
 =================================================
 1. 系统初始化 (BBR/Swap)     *建议首选*
@@ -84,13 +84,14 @@ Plaintext
 8. 安全加固 (防火墙/Fail2Ban)
 9. 磁盘/日志清理
 10. 卸载应用 ->
+11. 重装 Debian 12 (DD)     *高危*
 =================================================
 ❓ 常见问题 (FAQ)
 Q: 为什么选择 Lucky 而不是 Nginx Proxy Manager (NPM)? A: NPM 虽然好用，但它是基于 Node.js 的，空闲状态下可能占用 100MB+ 内存。而 Lucky 基于 Go 语言，仅占用 20MB 左右，对于 1GB 内存的小鸡（VPS）来说，这节省下来的资源至关重要。
 
 Q: 开启“安全加固”后连不上 SSH 了怎么办？ A: 脚本会自动检测你当前的 SSH 端口并放行。但如果你在防火墙开启后修改了 SSH 端口，请务必先手动放行新端口 (ufw allow 新端口) 再重启 SSH 服务。
 
-Q: 如何卸载某个应用？ A: 脚本内置了卸载模块。运行脚本 -> 选择 10 -> 选择对应应用即可。它会自动停止容器、删除数据目录并清理防火墙规则。
+Q: DD 重装系统卡住了怎么办？ A: 重装过程通常需要 10-20 分钟，期间 SSH 会断开。如果超过 30 分钟无法连接，请登录 VPS 服务商的 VNC 控制台查看情况。注意：OpenVZ 和 LXC 架构不支持 DD。
 
 ⚠️ 免责声明
 本脚本仅供学习与技术交流使用，请勿用于任何非法用途。作者不承担因使用本脚本而导致的任何数据丢失或法律责任。建议在生产环境使用前先进行备份。
