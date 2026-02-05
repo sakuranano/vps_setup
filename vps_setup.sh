@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # =========================================================
-# 脚本名称: VPS 运维工具箱 V6.3 (DD重装版)
+# 脚本名称: VPS 运维工具箱 V6.4 (Kejilion重装版)
 # 适用环境: Debian 12 / Ubuntu 22+
 # 更新日志: 
-#   - V6.3: 新增 [一键重装系统] 功能 (Debian 12)
-#   - V6.2: 修复 CPU 显示 bug
+#   - V6.4: 移植 kejilion 的重装依赖逻辑 (更稳)
+#   - V6.3: 增加 DD 重装功能
 # =========================================================
 
 # 基础配置
@@ -39,35 +39,34 @@ function check_system_info() {
     echo -e "================================================="
     echo -e "${YELLOW}正在采样系统数据 (约 1 秒)...${PLAIN}"
     
+    # 依赖修复
+    if ! command -v vmstat >/dev/null 2>&1; then apt-get update -y && apt-get install -y procps; fi
+    
     os_info=$(grep PRETTY_NAME /etc/os-release | cut -d '"' -f 2)
     kernel_info=$(uname -r)
     uptime_info=$(uptime -p | sed 's/up //')
     virt_info=$(systemd-detect-virt 2>/dev/null || echo "unknown")
     tcp_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
     
-    if ! command -v vmstat >/dev/null 2>&1; then apt-get install -y procps >/dev/null 2>&1; fi
-    
     cpu_model=$(awk -F': ' '/model name/{print $2; exit}' /proc/cpuinfo)
     [ -z "$cpu_model" ] && cpu_model=$(lscpu | grep 'Model name' | sed 's/Model name:\s*//')
     cpu_cores=$(awk -F': ' '/processor/{print $2}' /proc/cpuinfo | wc -l)
     cpu_freq=$(awk -F': ' '/cpu MHz/{print $2; exit}' /proc/cpuinfo)
-    [ -z "$cpu_freq" ] && cpu_freq="未知"
     
     cpu_idle=$(vmstat 1 2 | tail -1 | awk '{print $15}')
     cpu_usage=$(echo "$cpu_idle" | awk '{print 100 - $1"%"}' 2>/dev/null)
     
     if grep -q "aes" /proc/cpuinfo; then aes_status="${GREEN}✅ 启用${PLAIN}"; else aes_status="${RED}❌ 未启用${PLAIN}"; fi
     
-    mem_total_mb=$(free -m | awk '/Mem:/ {print $2}')
     mem_used_mb=$(free -m | awk '/Mem:/ {print $3}')
-    mem_used_rate=$(awk 'BEGIN{printf "%.1f", ('$mem_used_mb'/'$mem_total_mb')*100}')
+    mem_total_mb=$(free -m | awk '/Mem:/ {print $2}')
+    mem_rate=$(awk 'BEGIN{printf "%.1f", ('$mem_used_mb'/'$mem_total_mb')*100}')
     
-    swap_total_mb=$(free -m | awk '/Swap:/ {print $2}')
     swap_used_mb=$(free -m | awk '/Swap:/ {print $3}')
+    swap_total_mb=$(free -m | awk '/Swap:/ {print $2}')
     
     disk_total=$(df -h / | awk '/\// {print $2}')
     disk_used=$(df -h / | awk '/\// {print $3}')
-    disk_rate=$(df -h / | awk '/\// {print $5}')
     
     ipv4=$(curl -s4m 2 ifconfig.me)
     [ -z "$ipv4" ] && ipv4="无 IPv4"
@@ -85,74 +84,68 @@ function check_system_info() {
     echo -e "CPU 核心 : ${SKYBLUE}$cpu_cores 核${PLAIN} (主频: ${cpu_freq} MHz)"
     echo -e "CPU 占用 : ${SKYBLUE}$cpu_usage${PLAIN} (AES: $aes_status)"
     echo -e "-------------------------------------------------"
-    echo -e "物理内存 : ${SKYBLUE}$mem_used_mb / $mem_total_mb MB${PLAIN} (占用: ${mem_used_rate}%)"
+    echo -e "物理内存 : ${SKYBLUE}$mem_used_mb / $mem_total_mb MB${PLAIN} (占用: ${mem_rate}%)"
     echo -e "虚拟内存 : ${SKYBLUE}$swap_used_mb / $swap_total_mb MB${PLAIN} (Swap)"
-    echo -e "硬盘空间 : ${SKYBLUE}$disk_used / $disk_total${PLAIN} (占用: $disk_rate)"
+    echo -e "硬盘空间 : ${SKYBLUE}$disk_used / $disk_total${PLAIN}"
     echo -e "-------------------------------------------------"
     echo -e "TCP 算法 : ${SKYBLUE}$tcp_cc${PLAIN}"
     echo -e "公网 IP  : ${SKYBLUE}$ipv4${PLAIN}"
-    
     echo ""
     read -p "查看完成，按回车键返回..."
 }
 
 # ---------------------------------------------------------
-# 新增功能：DD 重装系统 (危险操作)
+# 新增功能：DD 重装系统 (移植 Kejilion 逻辑)
 # ---------------------------------------------------------
 function reinstall_system() {
     clear
     echo -e "================================================="
     echo -e "       ${RED}⚠️  警告：一键重装系统 (DD) ⚠️${PLAIN}"
     echo -e "================================================="
-    echo -e "1. 此操作将 ${RED}彻底格式化硬盘${PLAIN}，所有数据将丢失！"
-    echo -e "2. 仅适用于 ${YELLOW}KVM / Xen${PLAIN} 架构，OpenVZ/LXC 请勿使用。"
-    echo -e "3. 系统将重装为纯净版 ${GREEN}Debian 12 (Bookworm)${PLAIN}。"
-    echo -e "4. 重装过程约需 10-20 分钟，期间 SSH 将断开。"
+    echo -e "1. 此操作将 ${RED}彻底格式化硬盘${PLAIN}，数据不可恢复！"
+    echo -e "2. 本功能移植自 ${SKYBLUE}kejilion/sh${PLAIN}，底层使用 InstallNET。"
+    echo -e "3. 目标系统: ${GREEN}Debian 12 (Bookworm)${PLAIN}"
+    echo -e "4. 警告: ${YELLOW}OpenVZ / LXC 架构不可用！${PLAIN}"
     echo -e "-------------------------------------------------"
     
-    # 二次确认
-    read -p "确认要执行重装吗？请输入 [yes] 继续，其他键取消: " confirm
-    if [[ "$confirm" != "yes" ]]; then
-        echo -e "${GREEN}已取消操作。${PLAIN}"
+    # 架构检查
+    if [ -f /proc/user_beancounters ] || [ ! -e /dev/kmsg ]; then
+        echo -e "${RED}检测到 OpenVZ/LXC 环境，不支持 DD 重装！脚本退出。${PLAIN}"
+        read -p "按回车返回..."
         return
     fi
     
+    read -p "确认要执行重装吗？输入 [yes] 继续: " confirm
+    if [[ "$confirm" != "yes" ]]; then echo -e "${GREEN}已取消。${PLAIN}"; return; fi
+    
     echo ""
-    read -p "请设置新的 root 密码 (留空则随机生成): " custom_pwd
-    if [[ -z "$custom_pwd" ]]; then
-        echo -e "${YELLOW}未输入密码，将使用脚本默认随机密码，请留意安装结束后的提示（但你可能看不到了）。${PLAIN}"
-        echo -e "${RED}强烈建议手动输入一个简单的密码，防止失联！${PLAIN}"
-        read -p "再给你一次机会，输入密码 (输入 x 放弃重装，回车继续使用随机): " retry_pwd
-        if [[ "$retry_pwd" == "x" ]]; then return; fi
-        if [[ -n "$retry_pwd" ]]; then custom_pwd="$retry_pwd"; fi
-    fi
+    read -p "请设置 root 密码 (默认 123456): " custom_pwd
+    if [[ -z "$custom_pwd" ]]; then custom_pwd="123456"; fi
     
-    echo -e "${GREEN}> 正在下载重装脚本及依赖...${PLAIN}"
+    echo -e "${GREEN}> [1/3] 正在安装必要依赖 (防止脚本假死)...${PLAIN}"
+    # 这一步参考了 kejilion 的依赖列表，非常全
     apt-get update -y
-    apt-get install -y wget curl unzip tar xz-utils openssl ca-certificates
+    apt-get install -y curl wget git unzip tar xz-utils openssl ca-certificates sudo
     
-    # 构造 DD 命令
-    # 使用 leitbogioro 的 InstallNET 脚本，这是目前支持 Debian 12 最好用的
-    dd_url="https://raw.githubusercontent.com/leitbogioro/Tools/master/Linux_reinstall/InstallNET.sh"
+    # 下载脚本到本地，更稳
+    echo -e "${GREEN}> [2/3] 下载安装脚本...${PLAIN}"
+    wget --no-check-certificate -O InstallNET.sh https://raw.githubusercontent.com/leitbogioro/Tools/master/Linux_reinstall/InstallNET.sh
+    chmod +x InstallNET.sh
     
-    cmd="bash <(curl -sSL $dd_url) -debian 12 -timezone Asia/Shanghai"
+    echo -e "${GREEN}> [3/3] 开始执行重装...${PLAIN}"
+    echo -e "${YELLOW}注意: 接下来会下载约 500MB 的镜像文件。${PLAIN}"
+    echo -e "${YELLOW}在此期间 SSH 不会断开，请耐心等待直到提示 'Reboot'。${PLAIN}"
     
-    if [[ -n "$custom_pwd" ]]; then
-        cmd="$cmd -pwd '$custom_pwd'"
-    fi
-
-    echo -e "${YELLOW}即将执行: $cmd${PLAIN}"
-    echo -e "${RED}3秒后开始自毁并重装...${PLAIN}"
-    sleep 3
+    # 执行重装命令 (Debian 12, 上海时区, 指定密码)
+    ./InstallNET.sh -debian 12 -timezone "Asia/Shanghai" -pwd "$custom_pwd"
     
-    eval "$cmd"
-    
-    echo -e "${RED}系统正在重启进入安装模式... SSH 即将断开。${PLAIN}"
-    echo -e "请等待约 15 分钟后尝试使用新密码连接 SSH (端口 22)。"
+    # 如果脚本执行成功，它会自动重启。
+    # 为了保险，我们捕捉一下
+    echo -e "${RED}如果长时间卡在这里不动，请检查 VPS 控制台。${PLAIN}"
 }
 
 # ---------------------------------------------------------
-# 核心功能模块 (安装/管理)
+# 核心功能模块
 # ---------------------------------------------------------
 
 function install_dpanel() {
@@ -307,7 +300,7 @@ function show_menu() {
     get_app_status
     clear
     echo -e "================================================="
-    echo -e "   VPS 运维工具箱 V6.3 ${YELLOW}[DD重装版]${PLAIN}"
+    echo -e "   VPS 运维工具箱 V6.4 ${YELLOW}[Kejilion版]${PLAIN}"
     echo -e "   存储: ${SKYBLUE}$BASE_DIR${PLAIN}"
     echo -e "================================================="
     echo -e "${GREEN}1.${PLAIN} 系统初始化 (BBR/Swap)     ${YELLOW}*建议首选*${PLAIN}"
