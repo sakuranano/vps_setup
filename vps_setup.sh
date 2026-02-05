@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # =========================================================
-# 脚本名称: VPS 运维工具箱 V6.2 (CPU显示修复版)
+# 脚本名称: VPS 运维工具箱 V6.3 (DD重装版)
 # 适用环境: Debian 12 / Ubuntu 22+
 # 更新日志: 
-#   - V6.2: 修复系统看板 CPU 100% 显示 bug (改用 vmstat 采样)
-#   - V6.1: 新增硬件配置看板
+#   - V6.3: 新增 [一键重装系统] 功能 (Debian 12)
+#   - V6.2: 修复 CPU 显示 bug
 # =========================================================
 
 # 基础配置
@@ -30,7 +30,7 @@ function get_app_status() {
 }
 
 # ---------------------------------------------------------
-# 核心功能：系统配置看板 (修复 CPU 算法)
+# 核心功能：系统配置看板
 # ---------------------------------------------------------
 function check_system_info() {
     clear
@@ -39,15 +39,12 @@ function check_system_info() {
     echo -e "================================================="
     echo -e "${YELLOW}正在采样系统数据 (约 1 秒)...${PLAIN}"
     
-    # 1. 系统基础信息
     os_info=$(grep PRETTY_NAME /etc/os-release | cut -d '"' -f 2)
     kernel_info=$(uname -r)
     uptime_info=$(uptime -p | sed 's/up //')
     virt_info=$(systemd-detect-virt 2>/dev/null || echo "unknown")
     tcp_cc=$(sysctl -n net.ipv4.tcp_congestion_control)
     
-    # 2. CPU 信息 (修复点：使用 vmstat 采样 1秒 计算，更精准)
-    # 安装 procps 确保 vmstat 可用 (通常已预装)
     if ! command -v vmstat >/dev/null 2>&1; then apt-get install -y procps >/dev/null 2>&1; fi
     
     cpu_model=$(awk -F': ' '/model name/{print $2; exit}' /proc/cpuinfo)
@@ -56,14 +53,11 @@ function check_system_info() {
     cpu_freq=$(awk -F': ' '/cpu MHz/{print $2; exit}' /proc/cpuinfo)
     [ -z "$cpu_freq" ] && cpu_freq="未知"
     
-    # 计算 CPU 使用率 (100 - idle)
     cpu_idle=$(vmstat 1 2 | tail -1 | awk '{print $15}')
     cpu_usage=$(echo "$cpu_idle" | awk '{print 100 - $1"%"}' 2>/dev/null)
     
-    # AES 指令集检测
     if grep -q "aes" /proc/cpuinfo; then aes_status="${GREEN}✅ 启用${PLAIN}"; else aes_status="${RED}❌ 未启用${PLAIN}"; fi
     
-    # 3. 内存与硬盘
     mem_total_mb=$(free -m | awk '/Mem:/ {print $2}')
     mem_used_mb=$(free -m | awk '/Mem:/ {print $3}')
     mem_used_rate=$(awk 'BEGIN{printf "%.1f", ('$mem_used_mb'/'$mem_total_mb')*100}')
@@ -75,11 +69,9 @@ function check_system_info() {
     disk_used=$(df -h / | awk '/\// {print $3}')
     disk_rate=$(df -h / | awk '/\// {print $5}')
     
-    # 4. 网络简测
     ipv4=$(curl -s4m 2 ifconfig.me)
     [ -z "$ipv4" ] && ipv4="无 IPv4"
 
-    # --- 输出展示 ---
     clear
     echo -e "================================================="
     echo -e "           VPS 硬件配置与资源看板"
@@ -102,6 +94,61 @@ function check_system_info() {
     
     echo ""
     read -p "查看完成，按回车键返回..."
+}
+
+# ---------------------------------------------------------
+# 新增功能：DD 重装系统 (危险操作)
+# ---------------------------------------------------------
+function reinstall_system() {
+    clear
+    echo -e "================================================="
+    echo -e "       ${RED}⚠️  警告：一键重装系统 (DD) ⚠️${PLAIN}"
+    echo -e "================================================="
+    echo -e "1. 此操作将 ${RED}彻底格式化硬盘${PLAIN}，所有数据将丢失！"
+    echo -e "2. 仅适用于 ${YELLOW}KVM / Xen${PLAIN} 架构，OpenVZ/LXC 请勿使用。"
+    echo -e "3. 系统将重装为纯净版 ${GREEN}Debian 12 (Bookworm)${PLAIN}。"
+    echo -e "4. 重装过程约需 10-20 分钟，期间 SSH 将断开。"
+    echo -e "-------------------------------------------------"
+    
+    # 二次确认
+    read -p "确认要执行重装吗？请输入 [yes] 继续，其他键取消: " confirm
+    if [[ "$confirm" != "yes" ]]; then
+        echo -e "${GREEN}已取消操作。${PLAIN}"
+        return
+    fi
+    
+    echo ""
+    read -p "请设置新的 root 密码 (留空则随机生成): " custom_pwd
+    if [[ -z "$custom_pwd" ]]; then
+        echo -e "${YELLOW}未输入密码，将使用脚本默认随机密码，请留意安装结束后的提示（但你可能看不到了）。${PLAIN}"
+        echo -e "${RED}强烈建议手动输入一个简单的密码，防止失联！${PLAIN}"
+        read -p "再给你一次机会，输入密码 (输入 x 放弃重装，回车继续使用随机): " retry_pwd
+        if [[ "$retry_pwd" == "x" ]]; then return; fi
+        if [[ -n "$retry_pwd" ]]; then custom_pwd="$retry_pwd"; fi
+    fi
+    
+    echo -e "${GREEN}> 正在下载重装脚本及依赖...${PLAIN}"
+    apt-get update -y
+    apt-get install -y wget curl unzip tar xz-utils openssl ca-certificates
+    
+    # 构造 DD 命令
+    # 使用 leitbogioro 的 InstallNET 脚本，这是目前支持 Debian 12 最好用的
+    dd_url="https://raw.githubusercontent.com/leitbogioro/Tools/master/Linux_reinstall/InstallNET.sh"
+    
+    cmd="bash <(curl -sSL $dd_url) -debian 12 -timezone Asia/Shanghai"
+    
+    if [[ -n "$custom_pwd" ]]; then
+        cmd="$cmd -pwd '$custom_pwd'"
+    fi
+
+    echo -e "${YELLOW}即将执行: $cmd${PLAIN}"
+    echo -e "${RED}3秒后开始自毁并重装...${PLAIN}"
+    sleep 3
+    
+    eval "$cmd"
+    
+    echo -e "${RED}系统正在重启进入安装模式... SSH 即将断开。${PLAIN}"
+    echo -e "请等待约 15 分钟后尝试使用新密码连接 SSH (端口 22)。"
 }
 
 # ---------------------------------------------------------
@@ -196,7 +243,6 @@ function uninstall_app() {
 
 function system_init() {
     echo -e "${GREEN}> 系统初始化...${PLAIN}"
-    # 增加 procps 依赖 (包含 vmstat)
     apt update -y && apt install -y curl wget git htop vim unzip socat tar gnupg lsb-release lsof jq procps
     timedatectl set-timezone Asia/Shanghai
     if ! grep -q "bbr" /etc/sysctl.conf; then
@@ -261,7 +307,7 @@ function show_menu() {
     get_app_status
     clear
     echo -e "================================================="
-    echo -e "   VPS 运维工具箱 V6.2 ${YELLOW}[CPU修复版]${PLAIN}"
+    echo -e "   VPS 运维工具箱 V6.3 ${YELLOW}[DD重装版]${PLAIN}"
     echo -e "   存储: ${SKYBLUE}$BASE_DIR${PLAIN}"
     echo -e "================================================="
     echo -e "${GREEN}1.${PLAIN} 系统初始化 (BBR/Swap)     ${YELLOW}*建议首选*${PLAIN}"
@@ -271,12 +317,13 @@ function show_menu() {
     echo -e "${GREEN}4.${PLAIN} ${SKYBLUE}部署 Lucky 反代${PLAIN}           $lucky_status"
     echo -e "${GREEN}5.${PLAIN} ${SKYBLUE}部署 DPanel 面板${PLAIN}          $dp_status"
     echo -e "-------------------------------------------------"
-    echo -e "${GREEN}6.${PLAIN} ${YELLOW}查看本机配置 (硬件/资源)${PLAIN}"
+    echo -e "${GREEN}6.${PLAIN} 查看本机配置 (硬件/资源)"
     echo -e "${GREEN}7.${PLAIN} 全能 IP 体检 (解锁/欺诈分)"
     echo -e "-------------------------------------------------"
     echo -e "${GREEN}8.${PLAIN} 安全加固 (防火墙/Fail2Ban)"
     echo -e "${GREEN}9.${PLAIN} 磁盘/日志清理"
     echo -e "${GREEN}10.${PLAIN} ${RED}卸载应用 ->${PLAIN}"
+    echo -e "${GREEN}11.${PLAIN} ${RED}重装 Debian 12 (DD)${PLAIN}     ${RED}*高危*${PLAIN}"
     echo -e "================================================="
     echo -e "${GREEN}0.${PLAIN} 退出"
     echo -e "================================================="
@@ -292,6 +339,7 @@ function show_menu() {
         8) install_security ;;
         9) ops_cleanup ;;
         10) show_uninstall_menu ;;
+        11) reinstall_system ;;
         0) exit 0 ;;
         *) echo -e "${RED}输入错误${PLAIN}" ;;
     esac
