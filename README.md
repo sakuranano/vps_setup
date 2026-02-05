@@ -12,7 +12,7 @@
 
 ```bash
 apt update && apt install -y wget && wget -O vps_setup.sh [https://raw.githubusercontent.com/sakuranano/vps_setup/refs/heads/main/vps_setup.sh](https://raw.githubusercontent.com/sakuranano/vps_setup/refs/heads/main/vps_setup.sh) && chmod +x vps_setup.sh && ./vps_setup.sh
-```
+
 
 *(如果下载网络不佳，请检查 VPS 的 DNS 设置或网络连接)*
 
